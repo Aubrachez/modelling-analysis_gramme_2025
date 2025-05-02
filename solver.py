@@ -8,7 +8,7 @@ beta = 9       # Constante ressort horizontal (k2 L / mg)
 gamma = 2      # Rapport des masses M/m
 lambda1 = 1    # Longueur mini ressort vertical
 lambda2 = 1    # Longueur mini ressort horizontal
-damping = 0.05 # Dissipation
+damping = 0.0 # Dissipation
 
 # --- ÉQUATIONS DIFFÉRENTIELLES ---
 def ode_system(tau, y):
@@ -126,7 +126,7 @@ plt.grid()
 plt.legend()
 
 # --- ALLONGEMENT DU RESSORT HORIZONTAL ---
-elong_horiz = np.cos(theta) - lambda2
+elong_horiz = -(np.cos(theta) - lambda2)
 
 plt.subplot(3, 2, 6)
 plt.plot(tau, elong_horiz, label="Allongement ressort horizontal", color='tab:purple')
