@@ -1,0 +1,504 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+from scipy.integrate import solve_ivp
+
+# -------------------------------
+# 🧠 PARAMÈTRES 
+# -------------------------------
+L = 5.0
+g = 9.81
+m = 1.0
+m_b = 2.0
+k_h = 30.0
+k_v = 9.81
+l_h0 = 1.0
+l_v0 = 1.0
+c_theta = 0.5
+c_mu = 0.5
+epsilon_angle = 1e-3 # Petite marge pour les angles limites
+
+# -------------------------------
+# 📐 ÉQUATIONS DU SYSTÈME (renommée pour plus de clarté)
+# -------------------------------
+def ode_system(t, Y):
+    theta, theta_dot, mu, mu_dot = Y
+    c = np.cos(theta)
+    s = np.sin(theta)
+    
+    # ... (partie M11, M12 etc. inchangée)
+
+    M11 = (m_b / 3.0) * L**2 + m * (L * c)**2
+    M12 = -m * L * c
+    M21 = -m * L * c
+    M22 = m
+
+    # ... (F1 inchangé)
+    F1 = (- (m_b / 2.0 + m) * g * L * c
+          + k_h * (L * c - l_h0) * L * s
+          - m * (L * s * theta_dot)**2
+          - c_theta * theta_dot)
+
+    # ---- VÉRIFIEZ ATTENTIVEMENT CETTE PARTIE ----
+    F2 = (m * g
+          - k_v * (mu - l_v0)     # <--- ASSUREZ-VOUS QUE CETTE LIGNE EST IDENTIQUE
+          + m * L * s * theta_dot**2
+          - c_mu * mu_dot)
+    # ----------------------------------------------
+
+    det_M = M11 * M22 - M12 * M21
+    if abs(det_M) < 1e-12:
+        return np.array([theta_dot, 0, mu_dot, 0])
+
+    inv_det_M = 1.0 / det_M
+    theta_ddot = inv_det_M * (M22 * F1 - M12 * F2)
+    mu_ddot = inv_det_M * (-M21 * F1 + M11 * F2)
+
+    return np.array([theta_dot, theta_ddot, mu_dot, mu_ddot])
+# -------------------------------
+# 🔔 DÉFINITION DES ÉVÉNEMENTS POUR LES CONTRAINTES
+# -------------------------------
+
+# Événement 1: La masse touche le sol (y_m = 0)
+def event_ground_contact(t, Y):
+    theta, _, mu, _ = Y
+    return L * np.sin(theta) - mu
+event_ground_contact.terminal = True  # Arrêter l'intégration
+event_ground_contact.direction = -1   # Détecter seulement quand y_m diminue
+
+# Événement 2: Le ressort vertical s'écrase (mu = 0)
+def event_mu_zero(t, Y):
+    return Y[2] # mu
+event_mu_zero.terminal = True
+event_mu_zero.direction = -1
+
+# Événement 3: La barre atteint l'angle minimal
+def event_angle_min(t, Y):
+    return Y[0] - epsilon_angle # theta
+event_angle_min.terminal = True
+event_angle_min.direction = -1
+
+# Événement 4: La barre atteint l'angle maximal
+def event_angle_max(t, Y):
+    return (np.pi/2 - epsilon_angle) - Y[0] # theta
+event_angle_max.terminal = True
+event_angle_max.direction = -1
+
+# -------------------------------
+# ⚙️ INTÉGRATION NUMÉRIQUE AVEC SOLVE_IVP ET GESTION D'ÉVÉNEMENTS
+# -------------------------------
+# Conditions initiales
+theta0 = np.pi / 3
+theta_dot0 = 0.0
+mu0 = 1.2
+mu_dot0 = 0.0
+y0 = np.array([theta0, theta_dot0, mu0, mu_dot0])
+
+# Paramètres de simulation
+t_start = 0
+T_max = 100.0 
+t_eval_points = 2500 
+
+# Listes pour stocker les morceaux de la solution entre les événements
+# ---- CORRECTIONS ICI ----
+t_solution = [np.array([t_start])]       # Fix 1: Initialise t_solution comme un array 1D
+y_solution = [y0.reshape(-1, 1)]         # Fix 2: Initialise y_solution comme un array 2D (vecteur colonne)
+
+current_t = t_start
+y_current = y0
+
+print("Début de l'intégration avec solve_ivp...")
+
+while current_t < T_max:
+    t_span = [current_t, T_max]
+    
+    sol = solve_ivp(
+        fun=ode_system, 
+        t_span=t_span, 
+        y0=y_current, 
+        method='RK45',
+        events=[event_ground_contact, event_mu_zero, event_angle_min, event_angle_max],
+        rtol=1e-6, 
+        atol=1e-8
+    )
+    
+    # On ajoute le segment de solution seulement s'il contient de nouveaux points
+    if sol.t.size > 1:
+        t_solution.append(sol.t[1:])
+        y_solution.append(sol.y[:, 1:]) # sol.y est déjà en 2D, c'est bon
+    
+    current_t = sol.t[-1]
+
+    if sol.status == 1: # Un événement a été déclenché
+        y_last = sol.y[:, -1].copy()
+        
+        # Logique de rebond... (inchangée)
+        if sol.t_events[0].size > 0:
+            print(f"INFO: Rebond sur le sol à t={current_t:.2f}s")
+            theta, theta_dot, mu, mu_dot = y_last
+            y_last[2] = L * np.sin(theta)
+            y_last[3] = L * np.cos(theta) * theta_dot
+        elif sol.t_events[1].size > 0:
+            print(f"INFO: Contact masse-barre (mu=0) à t={current_t:.2f}s")
+            y_last[2] = 0
+            y_last[3] = -0.5 * y_last[3]
+        elif sol.t_events[2].size > 0:
+            print(f"INFO: Rebond sur le mur vertical à t={current_t:.2f}s")
+            y_last[0] = epsilon_angle
+            y_last[1] = -0.5 * y_last[1]
+        elif sol.t_events[3].size > 0:
+            print(f"INFO: Rebond sur le mur horizontal à t={current_t:.2f}s")
+            y_last[0] = np.pi/2 - epsilon_angle
+            y_last[1] = -0.5 * y_last[1]
+
+        y_current = y_last
+    else: # L'intégration a atteint T_max sans événement
+        break
+
+print("Fin de l'intégration.")
+
+# Concaténer tous les segments de solution en un seul tableau
+# Cette partie fonctionnera maintenant car tous les tableaux ont 2 dimensions
+t_vals = np.concatenate(t_solution)
+Y_vals = np.hstack(y_solution).T
+
+# Échantillonner la solution à des points de temps réguliers
+t_eval = np.linspace(t_start, t_vals[-1], t_eval_points)
+Y_eval = np.array([np.interp(t_eval, t_vals, Y_vals[:, i]) for i in range(4)]).T
+
+
+# -------------------------------
+# 📊 POST-TRAITEMENT ET GRAPHIQUES (avec les données échantillonnées)
+# -------------------------------
+theta = Y_eval[:, 0]
+theta_dot = Y_eval[:, 1]
+mu = Y_eval[:, 2]
+mu_dot = Y_eval[:, 3]
+
+# Calcul des énergies pour validation
+T_barre = 1/6 * m_b * L**2 * theta_dot**2
+T_masse = 0.5 * m * (L * np.cos(theta) * theta_dot - mu_dot)**2
+T_totale = T_barre + T_masse
+
+V_g = m_b * g * L/2 * np.sin(theta) + m * g * (L * np.sin(theta) - mu)
+V_e = 0.5 * k_h * (L * np.cos(theta) - l_h0)**2 + 0.5 * k_v * (mu - l_v0)**2
+V_totale = V_g + V_e
+
+E_totale = T_totale + V_totale
+
+# ... Le reste du code pour les graphiques et l'animation reste identique ...
+# ... Il suffit de remplacer t_vals par t_eval et Y_vals par Y_eval dans la suite ...
+
+# GRAPHIQUES
+plt.figure(figsize=(15, 8))
+plt.suptitle("Résultats de la simulation avec solve_ivp et gestion d'événements", fontsize=16)
+
+plt.subplot(2, 3, 1)
+plt.plot(t_eval, np.rad2deg(theta))
+plt.title("Angle θ de la barre (°)")
+plt.xlabel("Temps (s)")
+plt.grid(True)
+
+plt.subplot(2, 3, 2)
+plt.plot(t_eval, mu)
+plt.title("Longueur μ du ressort vertical (m)")
+plt.xlabel("Temps (s)")
+plt.grid(True)
+
+plt.subplot(2, 3, 3)
+plt.plot(t_eval, L * np.sin(theta) - mu)
+plt.title("Position verticale de la masse (m)")
+plt.xlabel("Temps (s)")
+plt.axhline(0, color='r', linestyle='--')
+plt.grid(True)
+
+plt.subplot(2, 3, 4)
+plt.plot(t_eval, T_totale, label='Cinétique (T)')
+plt.plot(t_eval, V_totale, label='Potentielle (V)')
+plt.legend()
+plt.title("Énergies")
+plt.xlabel("Temps (s)")
+plt.grid(True)
+
+plt.subplot(2, 3, 5)
+plt.plot(t_eval, E_totale)
+plt.title("Énergie Mécanique Totale (T+V)")
+plt.xlabel("Temps (s)")
+plt.grid(True)
+
+plt.tight_layout(rect=[0, 0, 1, 0.96])
+plt.show()
+
+
+# -------------------------------
+# ANIMATION
+# -------------------------------
+fig, ax = plt.subplots(figsize=(6, 6))
+ax.set_xlim(-L * 0.2, L + 1)
+ax.set_ylim(-0.5, L + 1)
+ax.set_aspect('equal')
+ax.set_title("Animation du système avec amortissement et contraintes")
+
+bar_line, = ax.plot([], [], 'k-', lw=3)
+spring1_line, = ax.plot([], [], 'r--', lw=2)
+spring2_line, = ax.plot([], [], 'b--', lw=2)
+mass_point, = ax.plot([], [], 'ko', markersize=10)
+
+def init():
+    return bar_line, spring1_line, spring2_line, mass_point
+
+def animate(i):
+    th = theta[i]
+    mu_i = mu[i]
+
+    x1 = L * np.cos(th)
+    y2 = L * np.sin(th)
+    y3 = L * np.sin(th)-mu_i 
+
+    bar_line.set_data([0, x1], [y2, 0])
+    spring1_line.set_data([0, 0], [y2, y3])
+    spring2_line.set_data([0, x1], [0, 0])
+    mass_point.set_data(0, y3)
+
+    return bar_line, spring1_line, spring2_line, mass_point
+
+ani = FuncAnimation(fig, animate, frames=len(theta), init_func=init,
+                    blit=True, interval=20)
+plt.show()
+# ... (le code précédent reste inchangé jusqu'à la partie animation)
+
+# -------------------------------
+# 📈 GRAPHIQUES SUPPLÉMENTAIRES ET ANALYSES
+# -------------------------------
+
+# 1. Conversion en variables sans dimension pour l'analyse
+tau = t_eval * np.sqrt(g / L)  # Temps sans dimension
+mu_nd = mu / L                 # Longueur μ sans dimension
+theta_nd = theta               # Angle θ déjà sans dimension
+theta_dot_nd = theta_dot * np.sqrt(L / g)  # Dérivée dθ/dt sans dimension
+mu_dot_nd = mu_dot / np.sqrt(g * L)       # Dérivée dμ/dt sans dimension
+
+# Paramètres sans dimension (calculés à partir des paramètres physiques)
+alpha = (k_v * L) / (m * g)
+beta = k_h * L / (m * g)
+gamma = m / (m_b / 3 + m)
+lambda1 = l_v0 / L
+lambda2 = l_h0 / L
+
+# 2. Calcul des grandeurs supplémentaires pour les graphiques
+# Énergie sans dimension et sa variation
+E_nd = E_totale / (m * g * L)
+delta_E = E_nd - E_nd[0]
+
+# Hauteur de la masse et allongement du ressort
+height_mass = (L * np.sin(theta) - mu) / L
+elong_horiz = -(np.cos(theta) - lambda2)
+
+# 3. Création des graphiques supplémentaires
+plt.figure(figsize=(14, 10))
+
+# Graphique 1: États du système
+plt.subplot(3, 2, 1)
+plt.plot(tau, theta_nd, label='θ(τ)')
+plt.plot(tau, mu_nd, label='μ(τ)')
+plt.xlabel("τ (temps sans dimension)")
+plt.ylabel("États du système")
+plt.title("Évolution de θ(τ) et μ(τ)")
+plt.legend()
+plt.grid()
+
+# Graphique 2: Variation d'énergie
+plt.subplot(3, 2, 2)
+plt.plot(tau, delta_E, label='ΔE = E(τ) - E(0)')
+plt.xlabel("τ")
+plt.ylabel("Variation d'énergie")
+plt.title("Conservation de l'énergie")
+plt.grid()
+plt.legend()
+
+# Graphique 3: Vitesse angulaire
+plt.subplot(3, 2, 3)
+plt.plot(tau, theta_dot_nd, label="θ̇(τ)", color='tab:orange')
+plt.xlabel("τ")
+plt.ylabel("Vitesse angulaire")
+plt.title("Vitesse θ̇(τ)")
+plt.legend()
+plt.grid()
+
+# Graphique 4: Vitesse verticale
+plt.subplot(3, 2, 4)
+plt.plot(tau, mu_dot_nd, label="μ̇(τ)", color='tab:green')
+plt.xlabel("τ")
+plt.ylabel("Vitesse μ̇(τ)")
+plt.title("Vitesse verticale μ̇(τ)")
+plt.legend()
+plt.grid()
+
+# Graphique 5: Hauteur de la masse
+plt.subplot(3, 2, 5)
+plt.plot(tau, height_mass, label="Hauteur de la masse m", color='tab:red')
+plt.xlabel("τ")
+plt.ylabel("Hauteur (sans dimension)")
+plt.title("Hauteur de la masse suspendue par rapport au sol")
+plt.grid()
+plt.legend()
+
+# Graphique 6: Allongement ressort horizontal
+plt.subplot(3, 2, 6)
+plt.plot(tau, elong_horiz, label="Allongement ressort horizontal", color='tab:purple')
+plt.xlabel("τ")
+plt.ylabel("Allongement (sans dimension)")
+plt.title("Allongement du ressort horizontal")
+plt.grid()
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+# 5. Analyse de Fourier avec conversion en Hz
+def fourier_analysis(signal, t, label):
+    N = len(t)
+    dt = t[1] - t[0]
+    freq_nd = np.fft.fftfreq(N, dt)
+    fft_vals = np.abs(np.fft.fft(signal))
+    
+    # Conversion en fréquences physiques (Hz)
+    freq_Hz = freq_nd * (1/(2*np.pi)) * np.sqrt(g/L)
+    
+    # Filtrage des fréquences positives
+    mask = freq_Hz > 0
+    freq_Hz = freq_Hz[mask]
+    fft_vals = fft_vals[mask]
+    
+    # Tracé
+    plt.figure(figsize=(10, 4))
+    plt.plot(freq_Hz, fft_vals)
+    plt.xlabel("Fréquence (Hz)")
+    plt.ylabel("Amplitude")
+    plt.title(f"Analyse de Fourier de {label}")
+    plt.grid()
+    plt.tight_layout()
+    plt.show()
+
+# Application aux signaux theta et mu
+fourier_analysis(theta_nd, tau, "θ(τ)")
+fourier_analysis(mu_nd, tau, "μ(τ)")
+
+# 6. Linéarisation et comparaison avec modèle non-linéaire
+def linearized_ode(t, y):
+    theta, theta_dot, mu, mu_dot = y
+    I = (m_b * L**2)/3 + m * L**2  # Moment d'inertie
+    
+    # Termes linéarisés
+    theta_ddot = (- (m_b/2 + m) * g * L * theta / I 
+                 + k_h * L**2 * theta / I
+                 - c_theta * theta_dot / I)
+    
+    mu_ddot = (m * g - k_v * (mu - l_v0) 
+              - c_mu * mu_dot)/m
+    
+    return [theta_dot, theta_ddot, mu_dot, mu_ddot]
+
+# Conditions initiales proches de l'équilibre
+theta_eq = 0.01  # Petite perturbation
+mu_eq = l_v0    # Position d'équilibre
+y0_lin = [theta_eq, 0.0, mu_eq, 0.0]
+
+# Résolution du système linéaire
+sol_lin = solve_ivp(linearized_ode, [t_start, 10], y0_lin, 
+                    t_eval=np.linspace(t_start, 10, 1000), 
+                    method='RK45', rtol=1e-10)
+
+# Résolution du système non-linéaire (mêmes CI)
+sol_nl = solve_ivp(ode_system, [t_start, 10], y0_lin, 
+                   t_eval=np.linspace(t_start, 10, 1000), 
+                   method='RK45', rtol=1e-10)
+
+# Extraction des résultats
+t_lin = sol_lin.t
+theta_lin = sol_lin.y[0]
+mu_lin = sol_lin.y[2]
+
+t_nl = sol_nl.t
+theta_nl = sol_nl.y[0]
+mu_nl = sol_nl.y[2]
+
+# Calcul des erreurs
+print(theta_lin)
+print(theta_nl)
+from scipy.interpolate import interp1d
+# Interpolation de theta_nl (116 points) sur les temps t_lin (1000 points)
+interp_theta_nl = interp1d(t_nl, theta_nl, kind='linear', fill_value="extrapolate")
+theta_nl_interp = interp_theta_nl(t_lin)  # Maintenant, theta_nl_interp a la même taille que theta_lin
+
+# Interpolation de mu_nl sur la grille de t_lin
+interp_mu_nl = interp1d(t_nl, mu_nl, kind='linear', fill_value="extrapolate")
+mu_nl_interp = interp_mu_nl(t_lin)
+
+error_theta = np.abs(theta_lin - theta_nl_interp)
+#error_theta = np.abs(theta_lin - theta_nl)
+error_mu = np.abs(mu_lin - mu_nl_interp)
+
+# Tracé des erreurs
+plt.figure(figsize=(10, 5))
+plt.plot(t_lin, error_theta, label='Erreur |θ_lin - θ_nl|')
+plt.plot(t_lin, error_mu, label='Erreur |μ_lin - μ_nl|')
+plt.yscale('log')
+plt.xlabel("Temps (s)")
+plt.ylabel("Erreur absolue (log)")
+plt.title("Erreur entre solution linéaire et non-linéaire")
+plt.legend()
+plt.grid()
+plt.tight_layout()
+plt.show()
+
+# 7. Identification du point d'équilibre
+from scipy.optimize import fsolve
+
+def equilibrium_eq(theta):
+    """Équations d'équilibre du système"""
+    term1 = (m_b/2 + m) * g * np.sin(theta)
+    term2 = k_h * (L * np.cos(theta) - l_h0) * np.sin(theta)
+    term3 = k_v * (L * np.sin(theta) - l_v0) * np.cos(theta)
+    return term1 - term2 - term3
+
+# Résolution numérique
+theta_eq = fsolve(equilibrium_eq, np.pi/4)[0]
+mu_eq = L * np.sin(theta_eq)
+
+print(f"Point d'équilibre trouvé :")
+print(f"θ_eq = {np.rad2deg(theta_eq):.2f} degrés")
+print(f"μ_eq = {mu_eq:.2f} m")
+print(f"Position verticale masse = {mu_eq:.2f} m")
+
+# 8. Test de convergence
+def convergence_test():
+    dt_values = [0.1, 0.05, 0.025, 0.0125]
+    errors = []
+    
+    for dt in dt_values:
+        t_eval_local = np.arange(0, 5, dt)
+        sol_ref = solve_ivp(ode_system, [0, 5], y0, 
+                           t_eval=t_eval_local, 
+                           method='RK45', rtol=1e-10).y[0]
+        
+        sol_test = solve_ivp(ode_system, [0, 5], y0, 
+                            t_eval=t_eval_local, 
+                            method='RK45', rtol=1e-10,
+                            atol=1e-12).y[0]
+        
+        error = np.linalg.norm(sol_test - sol_ref) / len(sol_ref)
+        errors.append(error)
+    
+    # Tracé de convergence
+    plt.figure()
+    plt.loglog(dt_values, errors, 'o-')
+    plt.xlabel("Pas de temps Δt (s)")
+    plt.ylabel("Erreur RMS")
+    plt.title("Convergence du schéma numérique")
+    plt.grid(True, which="both", ls="--")
+    plt.tight_layout()
+    plt.show()
+
+# Exécution du test
+convergence_test()
