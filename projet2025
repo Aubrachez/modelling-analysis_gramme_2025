@@ -415,10 +415,20 @@ def linearized_ode(t, y):
               - c_mu * mu_dot)/m
     
     return [theta_dot, theta_ddot, mu_dot, mu_ddot]
+# Résoudre analytiquement l'équilibre
+from scipy.optimize import fsolve
 
+def equilibrium_eq(vars):
+    theta_eq, mu_eq = vars
+    eq1 = (m_b/2 + m)*g*L*np.cos(theta_eq) - k_h*(L*np.cos(theta_eq) - l_h0)*L*np.sin(theta_eq)
+    eq2 = m*g - k_v*(mu_eq - l_v0)
+    return [eq1, eq2]
+
+theta_eq_0 = np.pi/4  # Valeur initiale
+mu_eq_0 = l_v0 + m*g/k_v  # Valeur initiale
+theta_eq, mu_eq = fsolve(equilibrium_eq, (theta_eq_0, mu_eq_0))
 # Conditions initiales proches de l'équilibre
-theta_eq = 0.00001  # Petite perturbation
-mu_eq = l_v0    # Position d'équilibre
+
 y0_lin = [theta_eq, 0.0, mu_eq, 0.0]
 
 # Résolution du système linéaire
@@ -430,7 +440,6 @@ sol_lin = solve_ivp(linearized_ode, [t_start, 10], y0_lin,
 sol_nl = solve_ivp(ode_system, [t_start, 10], y0_lin, 
                    t_eval=np.linspace(t_start, 10, 1000), 
                    method='RK45', rtol=1e-10)
-
 # Extraction des résultats
 t_lin = sol_lin.t
 theta_lin = sol_lin.y[0]
@@ -441,8 +450,7 @@ theta_nl = sol_nl.y[0]
 mu_nl = sol_nl.y[2]
 
 # Calcul des erreurs
-print(theta_lin)
-print(theta_nl)
+
 from scipy.interpolate import interp1d
 # Interpolation de theta_nl (116 points) sur les temps t_lin (1000 points)
 interp_theta_nl = interp1d(t_nl, theta_nl, kind='linear', fill_value="extrapolate")
@@ -470,24 +478,7 @@ plt.tight_layout()
 plt.show()
 
 # 7. Identification du point d'équilibre
-from scipy.optimize import fsolve
-
-def equilibrium_eq(theta):
-    """Équations d'équilibre du système"""
-    term1 = (m_b/2 + m) * g * np.sin(theta)
-    term2 = k_h * (L * np.cos(theta) - l_h0) * np.sin(theta)
-    term3 = k_v * (L * np.sin(theta) - l_v0) * np.cos(theta)
-    return term1 - term2 - term3
-
-# Résolution numérique
-theta_eq = fsolve(equilibrium_eq, np.pi/4)[0]
-mu_eq = L * np.sin(theta_eq)
-
-print(f"Point d'équilibre trouvé :")
-print(f"θ_eq = {np.rad2deg(theta_eq):.2f} degrés")
-print(f"μ_eq = {mu_eq:.2f} m")
-print(f"Position verticale masse = {mu_eq:.2f} m")
-
+print(f"Point d'équilibre trouvé : θ = {theta[-1]:.4f} rad, μ = {mu[-1]:.4f} m")
 # 8. Test de convergence
 
     
