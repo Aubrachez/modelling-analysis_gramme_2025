@@ -6,18 +6,19 @@ from scipy.integrate import solve_ivp
 # -------------------------------
 # 🧠 PARAMÈTRES 
 # -------------------------------
-L = 5.0
+L = 9.0
 g = 9.81
-m = 1.0
-m_b = 2.0
-k_h = 30.0
-k_v = 9.81
+m = 5.0
+m_b = 5.0
+k_h = 15.0
+k_v = 20
 l_h0 = 1.0
 l_v0 = 1.0
 c_theta = 0.5
 c_mu = 0.5
+damping=0.6 # Coefficient d'amortissement
 epsilon_angle = 1e-3 # Petite marge pour les angles limites
-
+temps1=0 # Variable pour stocker le temps précédent
 # -------------------------------
 # 📐 ÉQUATIONS DU SYSTÈME (renommée pour plus de clarté)
 # -------------------------------
@@ -26,7 +27,6 @@ def ode_system(t, Y):
     c = np.cos(theta)
     s = np.sin(theta)
     
-    # ... (partie M11, M12 etc. inchangée)
 
     M11 = (m_b / 3.0) * L**2 + m * (L * c)**2
     M12 = -m * L * c
@@ -37,7 +37,8 @@ def ode_system(t, Y):
     F1 = (- (m_b / 2.0 + m) * g * L * c
           + k_h * (L * c - l_h0) * L * s
           - m * (L * s * theta_dot)**2
-          - c_theta * theta_dot)
+          - c_theta * theta_dot
+          - damping * L**2 * s**2 * theta_dot)
 
     # ---- VÉRIFIEZ ATTENTIVEMENT CETTE PARTIE ----
     F2 = (m * g
@@ -62,9 +63,9 @@ def ode_system(t, Y):
 # Événement 1: La masse touche le sol (y_m = 0)
 def event_ground_contact(t, Y):
     theta, _, mu, _ = Y
-    return L * np.sin(theta) - mu
+    return L * np.sin(theta) - mu  # Position verticale de la masse
 event_ground_contact.terminal = True  # Arrêter l'intégration
-event_ground_contact.direction = -1   # Détecter seulement quand y_m diminue
+
 
 # Événement 2: Le ressort vertical s'écrase (mu = 0)
 def event_mu_zero(t, Y):
@@ -84,6 +85,7 @@ def event_angle_max(t, Y):
 event_angle_max.terminal = True
 event_angle_max.direction = -1
 
+
 # -------------------------------
 # ⚙️ INTÉGRATION NUMÉRIQUE AVEC SOLVE_IVP ET GESTION D'ÉVÉNEMENTS
 # -------------------------------
@@ -97,7 +99,7 @@ y0 = np.array([theta0, theta_dot0, mu0, mu_dot0])
 # Paramètres de simulation
 t_start = 0
 T_max = 100.0 
-t_eval_points = 2500 
+t_eval_points = 1000 
 
 # Listes pour stocker les morceaux de la solution entre les événements
 # ---- CORRECTIONS ICI ----
@@ -121,7 +123,7 @@ while current_t < T_max:
         rtol=1e-6, 
         atol=1e-8
     )
-    
+   
     # On ajoute le segment de solution seulement s'il contient de nouveaux points
     if sol.t.size > 1:
         t_solution.append(sol.t[1:])
@@ -132,24 +134,36 @@ while current_t < T_max:
     if sol.status == 1: # Un événement a été déclenché
         y_last = sol.y[:, -1].copy()
         
-        # Logique de rebond... (inchangée)
+        # Logique de rebond
         if sol.t_events[0].size > 0:
             print(f"INFO: Rebond sur le sol à t={current_t:.2f}s")
+            prcdtemps = temps1
+            temps1 = current_t
+            print(temps1-prcdtemps)
+            if temps1-prcdtemps < 0.18:
+                print("barre au sol")
+                break
             theta, theta_dot, mu, mu_dot = y_last
-            y_last[2] = L * np.sin(theta)
-            y_last[3] = L * np.cos(theta) * theta_dot
+            y_last[0] =  y_last[0]+0.001
+            y_last[1] = -y_last[1]*0.9
+            y_last[2] =  y_last[2]
+            y_last[3] = -y_last[3]*0.9
+
+
         elif sol.t_events[1].size > 0:
             print(f"INFO: Contact masse-barre (mu=0) à t={current_t:.2f}s")
             y_last[2] = 0
-            y_last[3] = -0.5 * y_last[3]
+            y_last[3] = -0.9 * y_last[3]
         elif sol.t_events[2].size > 0:
             print(f"INFO: Rebond sur le mur vertical à t={current_t:.2f}s")
-            y_last[0] = epsilon_angle
-            y_last[1] = -0.5 * y_last[1]
+           
+            y_last[0] = epsilon_angle+0.1
+            y_last[1] = -0.9 * y_last[1]
         elif sol.t_events[3].size > 0:
             print(f"INFO: Rebond sur le mur horizontal à t={current_t:.2f}s")
-            y_last[0] = np.pi/2 - epsilon_angle
-            y_last[1] = -0.5 * y_last[1]
+            
+            y_last[0] = y_last[0]+0.001
+            y_last[1] = -y_last[1]*0.9
 
         y_current = y_last
     else: # L'intégration a atteint T_max sans événement
@@ -186,9 +200,41 @@ V_totale = V_g + V_e
 
 E_totale = T_totale + V_totale
 
-# ... Le reste du code pour les graphiques et l'animation reste identique ...
-# ... Il suffit de remplacer t_vals par t_eval et Y_vals par Y_eval dans la suite ...
+# -------------------------------
+# ANIMATION
+# -------------------------------
+fig, ax = plt.subplots(figsize=(6, 6))
+ax.set_xlim(-L * 0.2, L + 1)
+ax.set_ylim(-0.5, L + 1)
+ax.set_aspect('equal')
+ax.set_title("Animation du système avec amortissement et contraintes")
 
+bar_line, = ax.plot([], [], 'k-', lw=3)
+spring1_line, = ax.plot([], [], 'r--', lw=2)
+spring2_line, = ax.plot([], [], 'b--', lw=2)
+mass_point, = ax.plot([], [], 'ko', markersize=10)
+
+def init():
+    return bar_line, spring1_line, spring2_line, mass_point
+
+def animate(i):
+    th = theta[i]
+    mu_i = mu[i]
+
+    x1 = L * np.cos(th)
+    y2 = L * np.sin(th)
+    y3 = L * np.sin(th)-mu_i 
+
+    bar_line.set_data([0, x1], [y2, 0])
+    spring1_line.set_data([0, 0], [y2, y3])
+    spring2_line.set_data([0, x1], [0, 0])
+    mass_point.set_data(0, y3)
+
+    return bar_line, spring1_line, spring2_line, mass_point
+
+ani = FuncAnimation(fig, animate, frames=len(theta), init_func=init,
+                    blit=True, interval=20)
+plt.show()
 # GRAPHIQUES
 plt.figure(figsize=(15, 8))
 plt.suptitle("Résultats de la simulation avec solve_ivp et gestion d'événements", fontsize=16)
@@ -226,46 +272,17 @@ plt.title("Énergie Mécanique Totale (T+V)")
 plt.xlabel("Temps (s)")
 plt.grid(True)
 
+plt.subplot(2, 3, 6)
+plt.plot(t_eval, L * np.cos(theta))
+plt.title("Longueur du ressort horizontal")
+plt.xlabel("Temps (s)")
+plt.grid(True)
+
 plt.tight_layout(rect=[0, 0, 1, 0.96])
 plt.show()
 
 
-# -------------------------------
-# ANIMATION
-# -------------------------------
-fig, ax = plt.subplots(figsize=(6, 6))
-ax.set_xlim(-L * 0.2, L + 1)
-ax.set_ylim(-0.5, L + 1)
-ax.set_aspect('equal')
-ax.set_title("Animation du système avec amortissement et contraintes")
 
-bar_line, = ax.plot([], [], 'k-', lw=3)
-spring1_line, = ax.plot([], [], 'r--', lw=2)
-spring2_line, = ax.plot([], [], 'b--', lw=2)
-mass_point, = ax.plot([], [], 'ko', markersize=10)
-
-def init():
-    return bar_line, spring1_line, spring2_line, mass_point
-
-def animate(i):
-    th = theta[i]
-    mu_i = mu[i]
-
-    x1 = L * np.cos(th)
-    y2 = L * np.sin(th)
-    y3 = L * np.sin(th)-mu_i 
-
-    bar_line.set_data([0, x1], [y2, 0])
-    spring1_line.set_data([0, 0], [y2, y3])
-    spring2_line.set_data([0, x1], [0, 0])
-    mass_point.set_data(0, y3)
-
-    return bar_line, spring1_line, spring2_line, mass_point
-
-ani = FuncAnimation(fig, animate, frames=len(theta), init_func=init,
-                    blit=True, interval=20)
-plt.show()
-# ... (le code précédent reste inchangé jusqu'à la partie animation)
 
 # -------------------------------
 # 📈 GRAPHIQUES SUPPLÉMENTAIRES ET ANALYSES
@@ -400,7 +417,7 @@ def linearized_ode(t, y):
     return [theta_dot, theta_ddot, mu_dot, mu_ddot]
 
 # Conditions initiales proches de l'équilibre
-theta_eq = 0.01  # Petite perturbation
+theta_eq = 0.00001  # Petite perturbation
 mu_eq = l_v0    # Position d'équilibre
 y0_lin = [theta_eq, 0.0, mu_eq, 0.0]
 
@@ -472,24 +489,34 @@ print(f"μ_eq = {mu_eq:.2f} m")
 print(f"Position verticale masse = {mu_eq:.2f} m")
 
 # 8. Test de convergence
+
+    
+
 def convergence_test():
     dt_values = [0.1, 0.05, 0.025, 0.0125]
+    ref_dt = dt_values[-1]
+    t_ref = np.arange(0, 5, ref_dt)
+    sol_ref = solve_ivp(ode_system, [0, 5], y0, t_eval=t_ref, method='RK45', rtol=1e-10)
+    theta_ref = sol_ref.y[0]
+    
     errors = []
-    
-    for dt in dt_values:
-        t_eval_local = np.arange(0, 5, dt)
-        sol_ref = solve_ivp(ode_system, [0, 5], y0, 
-                           t_eval=t_eval_local, 
-                           method='RK45', rtol=1e-10).y[0]
-        
-        sol_test = solve_ivp(ode_system, [0, 5], y0, 
-                            t_eval=t_eval_local, 
-                            method='RK45', rtol=1e-10,
-                            atol=1e-12).y[0]
-        
-        error = np.linalg.norm(sol_test - sol_ref) / len(sol_ref)
+
+    for dt in dt_values[:-1]:
+        t = np.arange(0, 5, dt)
+        sol = solve_ivp(ode_system, [0, 5], y0, t_eval=t, method='RK45', rtol=1e-10)
+        theta = sol.y[0]
+        interp_ref = np.interp(t, t_ref, theta_ref)
+        error = np.max(np.abs(theta - interp_ref))
         errors.append(error)
-    
+
+    plt.figure()
+    plt.loglog(dt_values[:-1], errors, '-o')
+    plt.xlabel("Pas de temps (s)")
+    plt.ylabel("Erreur max sur θ")
+    plt.title("Test de convergence (erreur vs dt)")
+    plt.grid(True)
+    plt.show()
+
     # Tracé de convergence
     plt.figure()
     plt.loglog(dt_values, errors, 'o-')
