@@ -10,7 +10,7 @@ L = 9.0
 g = 9.81
 m = 5.0
 m_b = 5.0
-k_h = 15.0
+k_h = 10.0
 k_v = 20
 l_h0 = 1.0
 l_v0 = 1.0
@@ -140,7 +140,7 @@ while current_t < T_max:
             prcdtemps = temps1
             temps1 = current_t
             print(temps1-prcdtemps)
-            if temps1-prcdtemps < 0.18:
+            if temps1-prcdtemps < 0.25:
                 print("barre au sol")
                 break
             theta, theta_dot, mu, mu_dot = y_last
@@ -372,34 +372,59 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 
-# 5. Analyse de Fourier avec conversion en Hz
-def fourier_analysis(signal, t, label):
+from scipy.signal import find_peaks
+
+def fourier_analysis_dual_with_peaks(signal1, signal2, t, label1, label2, n_peaks=3):
     N = len(t)
     dt = t[1] - t[0]
     freq_nd = np.fft.fftfreq(N, dt)
-    fft_vals = np.abs(np.fft.fft(signal))
+    signal1 = signal1 - np.mean(signal1)
+    signal2 = signal2 - np.mean(signal2)
+    # FFTs
+    fft1 = np.abs(np.fft.fft(signal1))
+    fft2 = np.abs(np.fft.fft(signal2))
     
-    # Conversion en fréquences physiques (Hz)
+    # Conversion en Hz
     freq_Hz = freq_nd * (1/(2*np.pi)) * np.sqrt(g/L)
     
-    # Filtrage des fréquences positives
+    # Garde uniquement les fréquences > 0
     mask = freq_Hz > 0
     freq_Hz = freq_Hz[mask]
-    fft_vals = fft_vals[mask]
+    fft1 = fft1[mask]
+    fft2 = fft2[mask]
+    
+    # Trouve les pics
+    peaks1, _ = find_peaks(fft1, height=np.max(fft1)*0.1)
+    peaks2, _ = find_peaks(fft2, height=np.max(fft2)*0.1)
+    
+    # Trie et sélectionne les pics les plus forts
+    top_peaks1 = peaks1[np.argsort(fft1[peaks1])[-n_peaks:]]
+    top_peaks2 = peaks2[np.argsort(fft2[peaks2])[-n_peaks:]]
     
     # Tracé
-    plt.figure(figsize=(10, 4))
-    plt.plot(freq_Hz, fft_vals)
+    plt.figure(figsize=(10, 5))
+    plt.plot(freq_Hz, fft1, label=label1)
+    plt.plot(freq_Hz, fft2, label=label2)
+    
+    plt.plot(freq_Hz[top_peaks1], fft1[top_peaks1], 'o', label=f"Pics {label1}")
+    plt.plot(freq_Hz[top_peaks2], fft2[top_peaks2], 's', label=f"Pics {label2}")
+    
+    for i in top_peaks1:
+        plt.text(freq_Hz[i], fft1[i], f"{freq_Hz[i]:.2f} Hz", ha='right', va='bottom', fontsize=8)
+    for i in top_peaks2:
+        plt.text(freq_Hz[i], fft2[i], f"{freq_Hz[i]:.2f} Hz", ha='left', va='bottom', fontsize=8)
+    
     plt.xlabel("Fréquence (Hz)")
     plt.ylabel("Amplitude")
-    plt.title(f"Analyse de Fourier de {label}")
+    plt.title("Analyse de Fourier avec pics dominants")
+    plt.legend()
     plt.grid()
     plt.tight_layout()
     plt.show()
 
-# Application aux signaux theta et mu
-fourier_analysis(theta_nd, tau, "θ(τ)")
-fourier_analysis(mu_nd, tau, "μ(τ)")
+# Utilisation
+fourier_analysis_dual_with_peaks(theta_nd, mu_nd, tau, "θ(τ)", "μ(τ)")
+
 
 # 6. Linéarisation et comparaison avec modèle non-linéaire
 def linearized_ode(t, y):
@@ -481,42 +506,93 @@ plt.show()
 print(f"Point d'équilibre trouvé : θ = {theta[-1]:.4f} rad, μ = {mu[-1]:.4f} m")
 # 8. Test de convergence
 
-    
 
-def convergence_test():
-    dt_values = [0.1, 0.05, 0.025, 0.0125]
-    ref_dt = dt_values[-1]
-    t_ref = np.arange(0, 5, ref_dt)
-    sol_ref = solve_ivp(ode_system, [0, 5], y0, t_eval=t_ref, method='RK45', rtol=1e-10)
-    theta_ref = sol_ref.y[0]
-    
-    errors = []
 
-    for dt in dt_values[:-1]:
-        t = np.arange(0, 5, dt)
-        sol = solve_ivp(ode_system, [0, 5], y0, t_eval=t, method='RK45', rtol=1e-10)
-        theta = sol.y[0]
-        interp_ref = np.interp(t, t_ref, theta_ref)
-        error = np.max(np.abs(theta - interp_ref))
-        errors.append(error)
+# ----------------------------------------
+#  TEST DE CONVERGENCE DU SCHÉMA NUMÉRIQUE
+# ----------------------------------------
 
-    plt.figure()
-    plt.loglog(dt_values[:-1], errors, '-o')
-    plt.xlabel("Pas de temps (s)")
-    plt.ylabel("Erreur max sur θ")
-    plt.title("Test de convergence (erreur vs dt)")
-    plt.grid(True)
-    plt.show()
+# Conditions initiales identiques à celles utilisées plus haut
+y0_conv = [np.pi / 3, 0.0, 1.2, 0.0]
+t_span_conv = [0, 10]
+t_eval_conv = np.linspace(t_span_conv[0], t_span_conv[1], 1000)
 
-    # Tracé de convergence
-    plt.figure()
-    plt.loglog(dt_values, errors, 'o-')
-    plt.xlabel("Pas de temps Δt (s)")
-    plt.ylabel("Erreur RMS")
-    plt.title("Convergence du schéma numérique")
-    plt.grid(True, which="both", ls="--")
-    plt.tight_layout()
-    plt.show()
+# Tolérances à tester
+tolerances = [1e-3, 1e-5, 1e-7, 1e-9]
 
-# Exécution du test
-convergence_test()
+# Stockage des solutions pour comparer
+solutions = []
+
+print("Début du test de convergence...")
+
+for tol in tolerances:
+    sol = solve_ivp(
+        ode_system,
+        t_span=t_span_conv,
+        y0=y0_conv,
+        method='RK45',
+        t_eval=t_eval_conv,
+        rtol=tol,
+        atol=tol
+    )
+    solutions.append(sol)
+    print(f"→ Résolu avec tolérance rtol=atol={tol}")
+
+# Solution la plus précise comme référence
+Y_ref = solutions[-1].y  # La dernière, avec la tolérance la plus petite
+
+# Calcul des erreurs pour les autres tolérances (par rapport à la référence)
+errors = []
+
+for i in range(len(tolerances) - 1):
+    Y_i = solutions[i].y
+    err = np.linalg.norm(Y_i - Y_ref, axis=0) / np.linalg.norm(Y_ref, axis=0)
+    errors.append(np.mean(err))
+
+# Tracé de l'erreur moyenne en fonction de la tolérance (log-log)
+plt.figure(figsize=(8, 5))
+plt.loglog(tolerances[:-1], errors, marker='o')
+plt.xlabel("Tolérance rtol=atol")
+plt.ylabel("Erreur relative moyenne")
+plt.title("Test de convergence du schéma RK45")
+plt.grid(True, which="both", ls="--")
+plt.tight_layout()
+plt.show()
+
+# ----------------------------------------
+# 🔋 TEST DE CONSERVATION DE L'ÉNERGIE
+# ----------------------------------------
+α = (m_b * L**2 / 3) / (m * L**2)   # inertie bar / masse suspendue
+β = k_v / (m * g)                   # raideur vertical / poids
+def energie_totale(t, y):
+    θ, θ_dot, μ, μ_dot = y
+    # Expressions extraites de ton système adimensionné
+    θ_dot2 = θ_dot**2
+    μ_dot2 = μ_dot**2
+
+    # Énergies cinétique et potentielle (adimensionnées)
+    E_kin = 0.5 * (α * θ_dot2 + μ_dot2)
+    E_pot = α * (1 - np.cos(θ)) + β * (μ - 1)**2 + μ
+
+    return E_kin + E_pot
+
+# Calcul de l’énergie totale pour chaque tolérance
+energies = []
+
+for sol in solutions:
+    E = np.array([energie_totale(t, y) for t, y in zip(sol.t, sol.y.T)])
+    energies.append(E)
+
+# Tracé de l’énergie pour chaque tolérance
+plt.figure(figsize=(10, 6))
+
+for i, E in enumerate(energies):
+    plt.plot(solutions[i].t, E, label=f'rtol=atol={tolerances[i]:.0e}')
+
+plt.xlabel("Temps")
+plt.ylabel("Énergie totale (adimensionnée)")
+plt.title("Conservation de l'énergie selon la tolérance")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
