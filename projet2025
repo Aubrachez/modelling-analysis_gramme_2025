@@ -6,21 +6,21 @@ from scipy.integrate import solve_ivp
 # -------------------------------
 # 🧠 PARAMÈTRES 
 # -------------------------------
-L = 9.0
+L = 7.0
 g = 9.81
-m = 5.0
+m = 10.0
 m_b = 5.0
-k_h = 10.0
-k_v = 20
+k_h = 30.0
+k_v = 1000.0
 l_h0 = 1.0
 l_v0 = 1.0
-c_theta = 0.5
-c_mu = 0.5
+c_theta = 0.9
+c_mu = 0.9
 damping=0.6 # Coefficient d'amortissement
 epsilon_angle = 1e-3 # Petite marge pour les angles limites
 temps1=0 # Variable pour stocker le temps précédent
 # -------------------------------
-# 📐 ÉQUATIONS DU SYSTÈME (renommée pour plus de clarté)
+# 📐 ÉQUATIONS DU SYSTÈME 
 # -------------------------------
 def ode_system(t, Y):
     theta, theta_dot, mu, mu_dot = Y
@@ -65,7 +65,7 @@ def event_ground_contact(t, Y):
     theta, _, mu, _ = Y
     return L * np.sin(theta) - mu  # Position verticale de la masse
 event_ground_contact.terminal = True  # Arrêter l'intégration
-
+event_ground_contact.direction = -1  
 
 # Événement 2: Le ressort vertical s'écrase (mu = 0)
 def event_mu_zero(t, Y):
@@ -136,19 +136,50 @@ while current_t < T_max:
         
         # Logique de rebond
         if sol.t_events[0].size > 0:
-            print(f"INFO: Rebond sur le sol à t={current_t:.2f}s")
+            
+            
             prcdtemps = temps1
             temps1 = current_t
-            print(temps1-prcdtemps)
-            if temps1-prcdtemps < 0.25:
-                print("barre au sol")
+            
+            if temps1 - prcdtemps < 0.25:
+                print("barre au sol ")
                 break
-            theta, theta_dot, mu, mu_dot = y_last
-            y_last[0] =  y_last[0]+0.001
-            y_last[1] = -y_last[1]*0.9
-            y_last[2] =  y_last[2]
-            y_last[3] = -y_last[3]*0.9
 
+            theta, theta_dot, mu, mu_dot = y_last
+            
+            if l_v0 >= mu :  # ressort écrasé ou en quasi-contact
+                # Rebond collectif barre + masse
+                y_last[0] += 0.001  # légère séparation angulaire
+                y_last[1] = -y_last[1] * 0.9
+                y_last[3] = -y_last[3] * 0.9
+
+
+                print("Rebond complet : masse + barre")
+           # Nouveau code corrigé
+            if mu > l_v0:
+                theta, theta_dot, mu, mu_dot = y_last
+                
+                # 1. Calculer la vitesse verticale ABSOLUE
+                v_vertical_abs = L * np.cos(theta) * theta_dot - mu_dot
+                
+                # 2. Inverser avec amortissement (coefficient 0.9)
+                v_vertical_abs_new = -0.9 * v_vertical_abs
+                
+                # 3. Recalculer mu_dot (theta_dot reste inchangé)
+                mu_dot_new = L * np.cos(theta) * theta_dot - v_vertical_abs_new
+                
+                # 4. Ajuster la position (légèrement au-dessus du sol)
+                mu_new = L * np.sin(theta) * 0.98
+                
+                # 5. Mettre à jour l'état
+                y_last[2] = mu_new
+                y_last[3] = mu_dot_new
+                
+                print("Rebond masse seule")
+
+    # Ne jamais modifier y_last[2] ici, c'est mu (hauteur relative)
+
+        
 
         elif sol.t_events[1].size > 0:
             print(f"INFO: Contact masse-barre (mu=0) à t={current_t:.2f}s")
@@ -247,7 +278,7 @@ plt.grid(True)
 
 plt.subplot(2, 3, 2)
 plt.plot(t_eval, mu)
-plt.title("Longueur μ du ressort vertical (m)")
+plt.title("Longueur du ressort vertical (m)")
 plt.xlabel("Temps (s)")
 plt.grid(True)
 
