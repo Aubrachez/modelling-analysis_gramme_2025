@@ -8,10 +8,10 @@ from scipy.integrate import solve_ivp
 # -------------------------------
 L = 7.0
 g = 9.81
-m = 10.0
+m = 5.0
 m_b = 5.0
-k_h = 30.0
-k_v = 1000.0
+k_h = 20.0
+k_v = 30.0
 l_h0 = 1.0
 l_v0 = 1.0
 c_theta = 0.9
